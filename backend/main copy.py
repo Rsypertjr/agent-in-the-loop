@@ -9,7 +9,6 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware 
 
 
 
@@ -25,15 +24,13 @@ auth_state = {"access_token": None}
 
 app = FastAPI()
 
-# Enable CORS for Next.js frontend communication
-
 
 @app.get("/")
 def login():
     """Step 1: Redirect user to GitHub to log in and authorize scopes."""
     # Ensure copilot permissions are requested in the scope array
     github_auth_url = (
-        "https://github.com/login/oauth/authorize"
+        f"https://github.com"
         f"?client_id={CLIENT_ID}"
         f"&redirect_uri={REDIRECT_URI}"
         f"&scope=read:user,copilot"
@@ -43,7 +40,7 @@ def login():
 @app.get("/callback")
 async def callback(code: str = Query(...)):
     """Step 2 & 3: Handle the callback code and exchange it for a gho_ token."""
-    token_url = "https://github.com/login/oauth/access_token"
+    token_url = "https://github.com"
     headers = {"Accept": "application/json"}
     payload = {
         "client_id": CLIENT_ID,
@@ -51,12 +48,11 @@ async def callback(code: str = Query(...)):
         "code": code,
         "redirect_uri": REDIRECT_URI
     }
-    print("Payload: ",payload)
+    
     async with httpx.AsyncClient() as client:
         response = await client.post(token_url, json=payload, headers=headers)
         data = response.json()
-   
-    print("Data: ", data)     
+        
     if "access_token" in data:
         auth_state["access_token"] = data["access_token"]
         return HTMLResponse("<h3>Authentication successful! You can close this tab and return to your terminal.</h3>")
@@ -104,59 +100,47 @@ async def fetch_market_data_handler(invocation: ToolInvocation) -> ToolResult:
     )
 
 
-async def run_copilot_agent(token: str):
-    """Step 4: Use the authenticated gho_ token inside the Copilot SDK."""
-    print(f"\n🚀 Instantiating Copilot SDK with OAuth token: {token[:8]}...")
-    
-    # Initialize the client with the retrieved gho_ token string
-    client = CopilotClient(github_token=token)
-    
-    session_config = {
-        "model": "claude-sonnet-4.5",
-        "tools": [Tool(
-            
-                name = "fetch_market_data",
-                description = "Fetches data for a stock ticker symbol.",
-                parameters = {
-                    "type": "object",
-                    "properties": {"ticker": {"type": "string"}},
-                    "required": ["ticker"]
-                }
-            
-        )]
-    }
-    
-    try:
-        session = await client.create_session(**session_config)
-        print("✅ Session successfully created with execution tools attached!")
-        
-        # Send your tool invocation test payload
-        response = await session.send_and_wait("Analyze NVDA using the fetch_market_data tool.")
-        print("Response:", response)
-        
-    except Exception as e:
-        print(f"❌ SDK Session Error: {e}")
-
-async def monitor_auth_flow():
-    """Poller that waits until the local webserver captures the OAuth token."""
-    print("\n[OAuth Server] Waiting for user authentication at http://localhost:8000 ...")
-    while auth_state["access_token"] is None:
-        await asyncio.sleep(0.5)
-        
-    # Valid gho_ token is acquired; execute the SDK agent pipeline
-    token = auth_state["access_token"]
-    await run_copilot_agent(token)
-
 async def main():
-    # Configure and start the local FastAPI web service in the background
-    config = uvicorn.Config(app, host="127.0.0.1", port=8000, log_level="warning")
-    server = uvicorn.Server(config)
-    
-    # Run the background web server and monitoring loop concurrently
-    await asyncio.gather(
-        server.serve(),
-        monitor_auth_flow()
-    )
+    # Initialize the client using your authenticated key
+    api_key = os.getenv("COPILOT_API_KEY")
+    client = CopilotClient(github_token=api_key)
+
+    # 1. Define your tool using the exact expected dictionary configuration
+    # Do NOT pass this list through json.dumps() later!
+
+
+    # 2. Build the keyword arguments unpacking payload correctly
+    # Note: `create_session` expects dictionary unpacking (**kwargs), not an index-based positional argument
+    session_config = {
+        "model": "claude-sonnet-4.5", # Or your preferred supported engine like gpt-4o
+        "tools":[
+            Tool(
+                name="fetch_market_data",
+                description="Fetches historical price data points for a given stock ticker.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "ticker": {"type": "string", "description": "The stock ticker symbol"}
+                    },
+                    "required": ["ticker"],
+                },
+                handler=fetch_market_data_handler, # Required for auto-invocation
+            )
+        ],
+    }
+
+    try:
+        # Create an active agent session
+        session = await client.create_session(**session_config)
+        print("Successfully initiated Copilot session with execution tools attached.")
+
+        # 3. Dispatch your prompt payload to wait for tool invocation hooks
+        response = await session.send_and_wait("Analyze NVDA stock metrics using the fetch_market_data tool.")
+        
+        print("Copilot Response:", response)
+
+    except Exception as e:
+        print(f"Error calling Copilot AI: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
