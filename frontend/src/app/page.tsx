@@ -16,7 +16,7 @@ export default function AdvancedAgentInterface() {
     { id: "1", sender: "agent", text: "Welcome to Capital Insights Engine. Ask me to fetch and audit market data analytics pipelines for any major ticker symbol." }
   ]);
   const [lastMessage, setLastMessage] = useState<Message>({ id: "", sender: "user", text: "" });
-  const [input, setInput] = useState("Analyze NVDA stock metrics");
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [pendingTool, setPendingTool] = useState<any>(null);
@@ -37,7 +37,7 @@ export default function AdvancedAgentInterface() {
     const userText = input;
     setInput("");
     setLoading(true);
-    setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "user", text: userText }]);
+    setMessages((prev) => [...prev, { id: threadId, sender: "user", text: userText }]);
 
     try {
       const response = await fetch(`${BACKEND_URL}/chat`, {
@@ -52,10 +52,12 @@ export default function AdvancedAgentInterface() {
         setIsPaused(true);
         setPendingTool(data.pending_tool_call);
       }
-      const last_message: Message = { id: (Date.now()+1).toString(), sender: "agent", text: data.last_agent_response };
+      const last_message: Message = { id: threadId, sender: "agent", text: data.last_agent_response };
       setLastMessage(last_message)
-      if (data.last_agent_response && data.pending_tool_call.length === 0) {      
-        setMessages((prev) => [...prev, last_message]);        
+      //if (data.last_agent_response && data.pending_tool_call.length === 0) {      
+        //setMessages((prev) => [...prev, last_message]);     
+      if (data.last_agent_response) {      
+         setMessages((prev) => [...prev, data.last_agent_response]);         
       }
     } catch (error) {
       console.error(error);
@@ -84,8 +86,8 @@ export default function AdvancedAgentInterface() {
       }
 
       if (data.final_agent_response) {
-        setMessages((prev) => [...prev, lastMessage]);
-        //setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "agent", text: data.final_agent_response }]);
+        //setMessages((prev) => [...prev, lastMessage]);
+        setMessages((prev) => [...prev, { id: threadId, sender: "agent", text: data.final_agent_response }]);
       }
     } catch (error) {
       console.error(error);
@@ -108,8 +110,8 @@ export default function AdvancedAgentInterface() {
           {/* CHAT INTERFACE CHANNEL FEED */}
           <div className="w-1/2 flex flex-col border-r border-slate-800 bg-slate-900/50">
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {messages.map((msg) => (
-                <div key={msg.id} className={`flex gap-4 ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+              {messages.map((msg,index) => (
+                <div key={index} className={`flex gap-4 ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
                   {msg.sender === "agent" && (
                     <div className={`flex h-8 w-8 items-center justify-center rounded bg-indigo-600`}><Bot size={16} /></div>
                   )}
@@ -120,7 +122,13 @@ export default function AdvancedAgentInterface() {
                   </div>                 
                 </div>
               ))}
-
+              {/* Global Loading Spinner for active asynchronous processing requests */}
+              {loading && !isPaused && (
+                <div className="flex gap-3 items-center text-xs text-slate-400 italic">
+                  <Loader2 className="animate-spin text-indigo-400" size={14} />
+                  Agent processing state steps...
+                </div>
+              )}
               {isPaused && pendingTool && (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-950/20 p-4 space-y-3">
                   <div className="flex items-center gap-2 text-amber-400 text-sm font-semibold">
@@ -145,7 +153,7 @@ export default function AdvancedAgentInterface() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   disabled={loading || isPaused}
-                  placeholder="Analyze stock ticker NVDA..."
+                  placeholder="Input a stock ticker symbol for analytics (i.e. NVDA, MSFT, TSLA, AAPL)"
                   className="flex-1 rounded bg-slate-900 border border-slate-800 px-4 py-2 text-sm focus:outline-none focus:border-indigo-500"
                 />
                 <button type="submit" className="bg-indigo-600 p-2 rounded hover:bg-indigo-500"><Send size={16} /></button>

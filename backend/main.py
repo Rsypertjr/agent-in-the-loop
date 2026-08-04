@@ -1,6 +1,7 @@
 import os
 import asyncio
 import random
+import json
 from copilot import CopilotClient, define_tool # Sourced via github-copilot-sdk
 
 from copilot.tools import Tool, ToolInvocation, ToolResult
@@ -38,6 +39,7 @@ auth_state = {"access_token": None}
 # 1.  Define the Shared State
 class State(TypedDict):
     messages: Annotated[list, add_messages]
+    ticker: str
     
    
 
@@ -67,9 +69,21 @@ class ChatGithubCopilot(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """Asynchronous execution path using native Copilot SDK definitions to fix tool visibility."""
+      
+        #print("\n\nKWARGS: ",kwargs.ticker)
+        data = kwargs
+        ticker = data['kwargs']['ticker']
+        tools = data['kwargs']['tools']
+        print("\n\nTicker: ",ticker)
+        print("\n\nTools: ",tools)
         last_message = messages[-1].content
+        
+        
+        print("\n\nLLM Intake Message Stack: ",messages)
         raw_langchain_tools = self.bound_tools + kwargs.get("tools", [])
         
+        #kwargs_tools = json.loads(kwargs).tools
+        #print("\n\nKWARGS TOOLS: ", kwargs_tools )
         processed_tools = []
         for t in raw_langchain_tools:
             if isinstance(t, BaseTool):
@@ -111,16 +125,8 @@ class ChatGithubCopilot(BaseChatModel):
             else:
                 processed_tools.append(t)
         
-        print("Processed Tools: ", processed_tools)
-        raw_tools = []
-        for r in processed_tools:
-            tl = {}
-            tl["name"] = r.name
-            tl["args"] = {}
-            tl["id"] = ''
-            raw_tools.append(dict(tl))
-            
-        print("Raw Tools:", raw_tools)
+        print("\n\nProcessed Tools: ", processed_tools)
+     
         
         # 4. Open session stream using fully compiled native types
         async with CopilotClient() as client:
@@ -131,8 +137,8 @@ class ChatGithubCopilot(BaseChatModel):
             ) as session:
                 response = await session.send_and_wait(last_message)
                 content = response.data.content
-        print("Response: ", response);
-        message = AIMessage(content=content,tool_calls=raw_tools)
+        print("\n\nLLM Response: ", response);
+        message = AIMessage(content=content,tool_calls=tools)
         generation = ChatGeneration(message=message)
         return ChatResult(generations=[generation])
     
@@ -177,7 +183,6 @@ async def run_copilot_agent(token: str,state:State):
             on_permission_request=PermissionHandler.approve_all
         ) as session:
             response = await session.send_and_wait(state["messages"][-1].content)
-            print("Response:", response)
             return(AIMessage(content=response.data.content,tool_calls=response.data.tool_requests))
             
     except Exception as e:
@@ -215,7 +220,9 @@ async def monitor_auth_flow():
 @tool
 def fetch_market_data(ticker: str) -> dict:
     """Fetches historical price data points and metadata for a given stock ticker symbol."""
-    # Simulating complex, nested database/API output
+    
+    # Simulating complex, nested database/API output   
+    print("\n\nTicker Inside Tool:", ticker)
     ticker_clean = ticker.upper().strip()
     base_price = {"AAPL": 180, "TSLA": 170, "NVDA": 450, "MSFT": 380}.get(ticker_clean, 100)
     
@@ -238,6 +245,9 @@ def fetch_market_data(ticker: str) -> dict:
     }
     
 # Define your tools array and bind them to the LLM  
+tool = {
+    
+}
 tools = [fetch_market_data]
 tool_node = ToolNode(tools)
 
@@ -270,9 +280,16 @@ async def call_model(state: State):
     token = auth_state["access_token"]
     #response = await run_copilot_agent(state["messages"])
     
+    print("Intake in Call Model: ", state)
     # Invoke the wrapper pipeline
-    response = await llm_with_tools.ainvoke([HumanMessage(content=state["messages"][-1].content)])
-    #print("Response: ",response)
+    content = state["messages"][-1].content
+    tool = {
+        "name": "fetch_market_data",
+        "args": {"ticker": content},  # Dynamically extract or default the parameter
+        "id": f"call_{random.randint(1000, 9999)}"
+    }
+    response = await llm_with_tools.ainvoke([HumanMessage(content=content, additional_kwargs={"ticker": content})],kwargs={"ticker": content, "tools":[tool]})
+    print("\n\n Call Model Response: ",response)
     
     content_string = response.content
     return {"messages": [AIMessage(content=content_string, tool_calls=response.tool_calls)]}
@@ -376,7 +393,7 @@ async def chat_with_agent(payload: ChatRequest):
     #print("config:", config)
     # Process the new message through the graph until it ends or hits an interrupt
     events = graph.astream(
-        {"messages": [HumanMessage(content=payload.message)]}, 
+        {"messages": [HumanMessage(content=payload.message, additional_kwargs={"ticker":payload.message})]}, 
         config, 
         stream_mode="values"
     )
@@ -390,10 +407,10 @@ async def chat_with_agent(payload: ChatRequest):
     # Check if the execution stopped due to a human checkpoint requirement
     state_snapshot = graph.get_state(config)
     
-    print("State Snapshot: ", state_snapshot )
+    #print("State Snapshot: ", state_snapshot )
     is_paused = len(state_snapshot.next) > 0
     
-    print("Is Paused: ",is_paused)
+    #print("Is Paused: ",is_paused)
     
     pending_tool_call = None
     if is_paused:
@@ -441,7 +458,9 @@ async def handle_approval(payload: ApprovalRequest):
 
     # Run the remaining stream to capture the post-approval/post-rejection agent behavior
     final_state = None
+    index = 1
     async for event in events:
+        print(f"\nEvent ${event}", event)
         final_state = event
 
     return {
