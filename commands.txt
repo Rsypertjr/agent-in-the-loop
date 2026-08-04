@@ -4,3 +4,5 @@ Ov23liXydNmtlhl31eFc
 Client Secret 8430b8cfa425baeb9fa9ea93cb425d6e6c385b3e
 
 REDIRECT_URI = http://localhost:8000/callback
+
+Analyze NVDA stock metrics.

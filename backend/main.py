@@ -35,19 +35,6 @@ REDIRECT_URI = "http://localhost:8000/callback"
 # Global state to share the token across threads safely
 auth_state = {"access_token": None}
 
-app = FastAPI()
-
-# Enable CORS for Next.js frontend communication
-
-# Enable CORS for Next.js frontend communication
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers={"*"},
-)
-
 # 1.  Define the Shared State
 class State(TypedDict):
     messages: Annotated[list, add_messages]
@@ -144,7 +131,7 @@ class ChatGithubCopilot(BaseChatModel):
             ) as session:
                 response = await session.send_and_wait(last_message)
                 content = response.data.content
-        
+        print("Response: ", response);
         message = AIMessage(content=content,tool_calls=raw_tools)
         generation = ChatGeneration(message=message)
         return ChatResult(generations=[generation])
@@ -284,7 +271,7 @@ async def call_model(state: State):
     #response = await run_copilot_agent(state["messages"])
     
     # Invoke the wrapper pipeline
-    response = await llm_with_tools.ainvoke([HumanMessage(content="Fetch data for NVDA")])
+    response = await llm_with_tools.ainvoke([HumanMessage(content=state["messages"][-1].content)])
     #print("Response: ",response)
     
     content_string = response.content
@@ -316,6 +303,21 @@ graph = builder.compile(
 
 
 
+app = FastAPI()
+
+# Define the origins that are allowed to make requests
+origins = [
+    "http://localhost:3000",
+]
+
+# Add the middleware to your app
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def login():
@@ -418,7 +420,7 @@ async def handle_approval(payload: ApprovalRequest):
 
     if payload.approve:
         # RESUME: Passing None routes the existing state into the paused node ("tools")
-        events = graph.stream(None, config, stream_mode="values")
+        events = graph.astream(None, config, stream_mode="values")
     else:
         # REJECT: We manually overwrite the state by appending a cancellation tool response.
         # This keeps the graph safe without crashing, telling the model the action was blocked.
@@ -432,7 +434,7 @@ async def handle_approval(payload: ApprovalRequest):
         )
         
         # Inject the rejection message into the history, bypassing the tool execution node entirely
-        graph.update_state(config, {"messages": [rejection_message]}, as_node="tools")
+        await graph.update_state(config, {"messages": [rejection_message]}, as_node="tools")
         
         # Resume the graph from the agent node so it can apologize or suggest alternatives to the user
         events = graph.astream(None, config, stream_mode="values")
