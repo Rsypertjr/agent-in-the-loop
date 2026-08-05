@@ -40,7 +40,6 @@ auth_state = {"access_token": None}
 class State(TypedDict):
     messages: Annotated[list, add_messages]
     ticker: str
-    
    
 
 class ChatGithubCopilot(BaseChatModel):
@@ -126,7 +125,7 @@ class ChatGithubCopilot(BaseChatModel):
                 processed_tools.append(t)
         
         print("\n\nProcessed Tools: ", processed_tools)
-     
+        get_charts = "Please return any analytical charts urls at the location '/home/rsypert/agent-in-the-loop/frontend/public' folder in the .png format. Make sure to delete preexisting charts"
         
         # 4. Open session stream using fully compiled native types
         async with CopilotClient() as client:
@@ -135,7 +134,7 @@ class ChatGithubCopilot(BaseChatModel):
                 tools=processed_tools,  
                 on_permission_request=PermissionHandler.approve_all
             ) as session:
-                response = await session.send_and_wait(last_message)
+                response = await session.send_and_wait(last_message + get_charts)
                 content = response.data.content
         print("\n\nLLM Response: ", response);
         message = AIMessage(content=content,tool_calls=tools)

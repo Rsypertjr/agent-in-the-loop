@@ -1,8 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Image from 'next/image';
+import fs from 'fs/promises';
+import path from 'path';
 import { Send, CheckCircle2, XCircle, AlertTriangle, Bot, User, Loader2, LineChart as ChartIcon } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import ChartDisplay from "./ChartDisplay";
 
 interface Message {
   id: string;
@@ -12,6 +16,7 @@ interface Message {
 
 export default function AdvancedAgentInterface() {
   const [threadId, setThreadId] = useState<string>("");
+  const [chartFiles, setChartFiles] = useState([]);
   const [messages, setMessages] = useState<Message[]>([
     { id: "1", sender: "agent", text: "Welcome to Capital Insights Engine. Ask me to fetch and audit market data analytics pipelines for any major ticker symbol." }
   ]);
@@ -28,7 +33,14 @@ export default function AdvancedAgentInterface() {
 
   useEffect(() => {
     setThreadId(`session_${Math.random().toString(36).substring(7)}`);
-  }, []);
+
+    fetch('api/charts')
+      .then((res) => res.json())
+      .then((data) => {
+        console.log(data.files);
+        setChartFiles(data.files);
+      }); 
+    }, []);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,8 +93,8 @@ export default function AdvancedAgentInterface() {
       const data = await response.json();
 
       // Catch complex non-text data structures generated during the execution pass loop
-      if (data.complex_chart_data) {
-        setActiveChartData(data.complex_chart_data);
+      if (data.complex_chart_data_urls) {
+        setActiveChartData(data.complex_chart_data_urls);
       }
 
       if (data.final_agent_response) {
@@ -162,32 +174,11 @@ export default function AdvancedAgentInterface() {
           </div>
 
           {/* COMPLEX DATA VIEW LAYER SCREEN PANEL */}
-       <div className="w-1/2 bg-slate-950 p-6 flex flex-col justify-center items-center">
-              {activeChartData ? (
-                <div className="w-full h-full flex flex-col space-y-4 animate-in fade-in duration-500">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-400 border-b border-slate-800 pb-2">
-                    <ChartIcon size={16} className="text-indigo-400" /> Dynamic Telemetry Visualization Framework Layer
-                  </div>
-                  <div className="w-full h-[320px] bg-slate-900/40 p-4 rounded-xl border border-slate-800">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={activeChartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4}/>
-                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="day" stroke="#64748b" fontSize={12} />
-                        <YAxis stroke="#64748b" fontSize={12} domain={['auto', 'auto']} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc' }} />
-                        <Area type="monotone" dataKey="price" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorPrice)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="text-xs text-slate-500 font-mono text-center">Interactive chart populated securely from human-audited internal data packet streams.</div>
-                </div>
-              ) : (
+       <div className="w-full bg-slate-950 justify-center items-center">
+              {chartFiles.length > 0  ? (
+                  <div className="p-2 max-w-xl bg-white rounded-2xl shadow-md overflow-x-auto scrollbar-h-2 scrollbar-thumb-sky-700 scrollbar-track-sky-300">
+                    <ChartDisplay initialFiles={chartFiles}/>
+                </div>) : (
                 <div className="text-center space-y-2 text-slate-600 max-w-sm">
                   <ChartIcon size={48} className="mx-auto text-slate-800 stroke-[1]" />
                   <p className="text-sm font-medium text-slate-500">No telemetry data loaded.</p>
