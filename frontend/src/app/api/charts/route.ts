@@ -2,11 +2,14 @@
 import 'server-only'
 import fs from 'fs/promises';
 import path from 'path';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+
+  const searchParams = request.nextUrl.searchParams;
+  const ticker = searchParams.get('ticker'); // "123"
   // Read directory or files on the server side
-  const dirPath = path.join(process.cwd(), 'public');
+  const dirPath = path.join(process.cwd(), 'public', ticker.toLowerCase());
   let files: string[] = [];
   
   try {

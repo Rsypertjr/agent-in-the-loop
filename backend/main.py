@@ -72,8 +72,10 @@ class ChatGithubCopilot(BaseChatModel):
         #print("\n\nKWARGS: ",kwargs.ticker)
         data = kwargs
         ticker = data['kwargs']['ticker']
+        analytics = data['kwargs']['analytics']
         tools = data['kwargs']['tools']
         print("\n\nTicker: ",ticker)
+        print("\n\nAnalytics: ",analytics)
         print("\n\nTools: ",tools)
         last_message = messages[-1].content
         
@@ -125,7 +127,19 @@ class ChatGithubCopilot(BaseChatModel):
                 processed_tools.append(t)
         
         print("\n\nProcessed Tools: ", processed_tools)
-        get_charts = "Please return any analytical charts urls at the location '/home/rsypert/agent-in-the-loop/frontend/public' folder in the .png format. Make sure to delete preexisting charts"
+        get_charts = """Please return any analytical charts urls at the location
+        '/home/rsypert/agent-in-the-loop/frontend/public/[ticker]' 
+        folder in the .png format under. [ticker] being the ticker user input. 
+        Only delete preexisting charts in the current ticker folder if they are out of date."""
+        newMessage = ''
+        if ticker and not analytics:
+            last_message = f"The ticker is: {ticker} and here are chart instructions: {get_charts}"
+        elif ticker and analytics:
+            last_message = f"This ticker is: {ticker} and analytics I would like done are: {analytics}.  Provide any charts you want according to: {get_charts}."
+        else:
+            last_message = f"You should find the ticker here: {last_message} and here are chart instructions {get_charts}."
+            
+        print("Last Message to LLM: ", last_message)
         
         # 4. Open session stream using fully compiled native types
         async with CopilotClient() as client:
@@ -134,7 +148,7 @@ class ChatGithubCopilot(BaseChatModel):
                 tools=processed_tools,  
                 on_permission_request=PermissionHandler.approve_all
             ) as session:
-                response = await session.send_and_wait(last_message + get_charts)
+                response = await session.send_and_wait(last_message)
                 content = response.data.content
         print("\n\nLLM Response: ", response);
         message = AIMessage(content=content,tool_calls=tools)
@@ -279,19 +293,46 @@ async def call_model(state: State):
     token = auth_state["access_token"]
     #response = await run_copilot_agent(state["messages"])
     
-    print("Intake in Call Model: ", state)
+    print("Intake in Call Model: ", state)     
+     
+    success = False
+    status = state["messages"][-1].content        
+    if any(char in status for char in ("{","}")):
+        print("\n\nStatus in Dictionary Form: ",json.loads(status))
+        if "success".casefold() in status.casefold():
+            success = True
+        
+    else:
+        print("\n\nStatus as String: ", status)
+        
+        
     # Invoke the wrapper pipeline
     content = state["messages"][-1].content
+    kwargs = state["messages"][-1].additional_kwargs
+    print("\n\n\nKwargs: ", kwargs)
+  
+    
+    if len(kwargs) > 0:    
+        ticker = kwargs["ticker"]
+        analytics = kwargs["analytics"]     
+    else:
+        ticker=content
+        analytics=""
+    print("\n\nTicker in Call Model :", ticker)
+    
     tool = {
         "name": "fetch_market_data",
         "args": {"ticker": content},  # Dynamically extract or default the parameter
         "id": f"call_{random.randint(1000, 9999)}"
     }
-    response = await llm_with_tools.ainvoke([HumanMessage(content=content, additional_kwargs={"ticker": content})],kwargs={"ticker": content, "tools":[tool]})
-    print("\n\n Call Model Response: ",response)
-    
-    content_string = response.content
-    return {"messages": [AIMessage(content=content_string, tool_calls=response.tool_calls)]}
+    if not success:
+        response = await llm_with_tools.ainvoke([HumanMessage(content=state["messages"][-1].content, additional_kwargs={"ticker": ticker, "analytics": analytics,"tools":[tool]})],kwargs={"ticker": ticker, "analytics": analytics,"tools":[tool]})
+        print("\n\n Call Model Response: ",response)    
+        content_string = response.content
+        return {"messages": [AIMessage(content=content_string, tool_calls=response.tool_calls)]}
+    elif success:
+        print("State Messages Stack: ", state)
+        return {"messages": [AIMessage(content=state["messages"][-2].content, tool_calls=[])]}
 
 async def route_after_agent(state: State) -> Literal["tools", "__end__"]:
     """Determines if the model wants to call a tool or finish the conversation."""
@@ -378,7 +419,8 @@ async def callback(code: str = Query(...)):
 
 class ChatRequest(BaseModel):
     thread_id: str
-    message: str
+    ticker:str
+    analytics: str
 
 class ApprovalRequest(BaseModel):
     thread_id: str
@@ -391,12 +433,25 @@ async def chat_with_agent(payload: ChatRequest):
     config = {"configurable": {"thread_id": payload.thread_id}}
     #print("config:", config)
     # Process the new message through the graph until it ends or hits an interrupt
-    events = graph.astream(
-        {"messages": [HumanMessage(content=payload.message, additional_kwargs={"ticker":payload.message})]}, 
-        config, 
-        stream_mode="values"
-    )
-    
+    if payload.ticker and not payload.analytics:   
+        events = graph.astream(
+            {"messages": [HumanMessage(content=payload.ticker, additional_kwargs={"ticker":payload.ticker, "analytics":""})]}, 
+            config, 
+            stream_mode="values"
+        )
+    elif payload.ticker and payload.analytics:  
+        events = graph.astream(
+            {"messages": [HumanMessage(content=(payload.ticker+payload.analytics), additional_kwargs={"ticker":payload.ticker, "analytics":payload.analytics})]}, 
+            config, 
+            stream_mode="values"
+        )
+    else:
+        print("Just sending Ticker to LLM!")
+        events = graph.astream(
+            {"messages": [HumanMessage(content=payload.ticker, additional_kwargs={"ticker":payload.ticker, "analytics":""})]}, 
+            config, 
+            stream_mode="values"
+        )
     # Consume the generator stream to drive execution forward
     final_state = None
     async for event in events:
