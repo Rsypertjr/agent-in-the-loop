@@ -6,3 +6,21 @@ Client Secret 8430b8cfa425baeb9fa9ea93cb425d6e6c385b3e
 REDIRECT_URI = http://localhost:8000/callback
 
 Analyze NVDA stock metrics.
+
+alpaca:
+31fcb06b-4fac-4dae-9ac4-54131457c8a9
+
+Welcome to Alpha Vantage! Here is your API key: 652YEM8GFKRTSOR0. Please record this API key at a safe place for future data access.
+
+Now that you have acquired an API key, please refer to our API documentation to start building. Need inspirations on what to build? Please check out the Trading Agents stock analysis tool (#1 trending on Github).
+
+MASSIVE key
+Secret Access Key:   yrZ3RBoikVqP2RhoDmavrW6D4L1XKFdX
+Access Key ID: 09e13569-ec98-4090-9202-2a33c6de61e3
+S3 Endpoint: https://files.massive.com 
+Buckey:  flatfiles
+
+Accessing the API 
+API Key: yrZ3RBoikVqP2RhoDmavrW6D4L1XKFdX 
+
+pip install -U massive

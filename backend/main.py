@@ -2,6 +2,7 @@ import os
 import asyncio
 import random
 import json
+import pandas as pd
 from copilot import CopilotClient, define_tool # Sourced via github-copilot-sdk
 
 from copilot.tools import Tool, ToolInvocation, ToolResult
@@ -22,6 +23,9 @@ from langchain_core.messages import AIMessage, HumanMessage, BaseMessage, ToolMe
 from langchain_core.outputs import ChatResult, ChatGeneration
 from pydantic import Field, BaseModel
 from langgraph.prebuilt import ToolNode
+
+from alpha_vantage.timeseries import TimeSeries 
+import pandas as pd
 
 
 
@@ -148,10 +152,29 @@ class ChatGithubCopilot(BaseChatModel):
                 tools=processed_tools,  
                 on_permission_request=PermissionHandler.approve_all
             ) as session:
-                response = await session.send_and_wait(last_message)
-                content = response.data.content
-        print("\n\nLLM Response: ", response);
-        message = AIMessage(content=content,tool_calls=tools)
+                llm_response = await session.send_and_wait(last_message)
+                content = llm_response.data.content
+        print("\n\nLLM Response: ", llm_response);
+        sanitized_tool_calls = []
+    
+        for tc in tools:
+            # If the API returned a string instead of a dict, parse it
+            if isinstance(tc, str):
+                try:
+                    tc = json.loads(tc)
+                except json.JSONDecodeError:
+                    continue # Skip or log bad data
+                    
+            # LangChain expects 'args' or 'arguments' as a dictionary too
+            if "arguments" in tc and isinstance(tc["arguments"], str):
+                try:
+                    tc["arguments"] = json.loads(tc["arguments"])
+                except json.JSONDecodeError:
+                    pass
+                
+        sanitized_tool_calls.append(tc)   
+        
+        message = AIMessage(content=content,tool_calls=sanitized_tool_calls)
         generation = ChatGeneration(message=message)
         return ChatResult(generations=[generation])
     
@@ -231,7 +254,7 @@ async def monitor_auth_flow():
 # ---------------------------------------------------------
 
 @tool
-def fetch_market_data(ticker: str) -> dict:
+def fetch_market_data_mock(ticker: str) -> dict:
     """Fetches historical price data points and metadata for a given stock ticker symbol."""
     
     # Simulating complex, nested database/API output   
@@ -257,10 +280,56 @@ def fetch_market_data(ticker: str) -> dict:
         "chart_data": historical_points
     }
     
-# Define your tools array and bind them to the LLM  
-tool = {
+
+@tool
+async def fetch_market_data(ticker: str) -> dict:
+    """Fetches historical price data points and metadata for a given stock ticker symbol asynchronously."""
+    from massive import RESTClient
+    from datetime import datetime
     
-}
+    # 1. Clean the incoming ticker parameter
+    ticker_clean = ticker.upper().strip() if ticker else "AAPL"
+    
+    # 2. Define the blocking work in a separate function
+    def blocking_fetch():
+        client = RESTClient(api_key="yrZ3RBoikVqP2RhoDmavrW6D4L1XKFdX")
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        aggs = []
+        
+        # This loop performs blocking I/O
+        for a in client.list_aggs(
+            ticker=ticker_clean, 
+            multiplier=1, 
+            timespan="day", 
+            from_="2026-08-01", 
+            to=current_date, 
+            limit=50000
+        ):
+            aggs.append(a)
+        
+        df = pd.DataFrame(aggs)
+        return df.to_dict(orient="records")
+
+    # 3. Offload the synchronous blocking operations to a worker thread
+    try:
+        data_records = await asyncio.to_thread(blocking_fetch)
+        return {
+            "status": "SUCCESS",
+            "ticker": ticker_clean,
+            "data": data_records
+        }
+    except Exception as e:
+        return {
+            "status": "ERROR",
+            "ticker": ticker_clean,
+            "details": str(e)
+        }
+
+   
+    
+    
+    
+# Define your tools array and bind them to the LLM  
 tools = [fetch_market_data]
 tool_node = ToolNode(tools)
 
@@ -295,16 +364,13 @@ async def call_model(state: State):
     
     print("Intake in Call Model: ", state)     
      
+    # Check if Charts have already been generated in order to skip unnecessary llm call
     success = False
-    status = state["messages"][-1].content        
-    if any(char in status for char in ("{","}")):
-        print("\n\nStatus in Dictionary Form: ",json.loads(status))
-        if "success".casefold() in status.casefold():
-            success = True
+    content_check = state["messages"][-1].content        
+    if "chart".casefold() in content_check.casefold():
+        success = True
         
-    else:
-        print("\n\nStatus as String: ", status)
-        
+    print("\n\nSuccess is: ", success)  
         
     # Invoke the wrapper pipeline
     content = state["messages"][-1].content
@@ -325,14 +391,14 @@ async def call_model(state: State):
         "args": {"ticker": content},  # Dynamically extract or default the parameter
         "id": f"call_{random.randint(1000, 9999)}"
     }
-    if not success:
-        response = await llm_with_tools.ainvoke([HumanMessage(content=state["messages"][-1].content, additional_kwargs={"ticker": ticker, "analytics": analytics,"tools":[tool]})],kwargs={"ticker": ticker, "analytics": analytics,"tools":[tool]})
-        print("\n\n Call Model Response: ",response)    
-        content_string = response.content
-        return {"messages": [AIMessage(content=content_string, tool_calls=response.tool_calls)]}
-    elif success:
-        print("State Messages Stack: ", state)
-        return {"messages": [AIMessage(content=state["messages"][-2].content, tool_calls=[])]}
+    
+    response = await llm_with_tools.ainvoke([HumanMessage(content=state["messages"][-1].content, additional_kwargs={"ticker": ticker, "analytics": analytics,"tools":[tool]})],kwargs={"ticker": ticker, "analytics": analytics,"tools":[tool]})
+    print("\n\n Call Model Response: ",response)    
+    content_string = response.content   
+    
+    print("\n\nRemaining Tool Calls: ",response.tool_calls)
+    return {"messages": [AIMessage(content=content_string, tool_calls=response.tool_calls)]}
+  
 
 async def route_after_agent(state: State) -> Literal["tools", "__end__"]:
     """Determines if the model wants to call a tool or finish the conversation."""
@@ -514,7 +580,7 @@ async def handle_approval(payload: ApprovalRequest):
     final_state = None
     index = 1
     async for event in events:
-        print(f"\nEvent ${event}", event)
+        print(f"\nEvent: {event}")
         final_state = event
 
     return {
